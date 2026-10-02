@@ -61,4 +61,4 @@ python client/test_client.py
 ## Notes
 - Pin the `vllm/vllm-openai` image tag to a version you have tested.
 - `Llama-3.1-8B-Instruct` is gated; accept the license on Hugging Face and store a valid token, or swap to `Qwen/Qwen2.5-7B-Instruct` (ungated).
-- The GPU pool is tainted `sku=gpu:NoSchedule` and can scale to zero — expect a cold start (node provision + model load) on the first request after idle.
+- The GPU pool is tainted `sku=gpu:NoSchedule` and can scale to zero. Expect a cold start (node provision + model load) on the first request after idle.
