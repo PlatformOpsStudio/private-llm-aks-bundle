@@ -1,0 +1,14 @@
+# Shared model cache. Azure Files Premium gives ReadWriteMany so multiple
+# replicas share one download. For a single replica, azuredisk (RWO) is cheaper.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-cache
+  namespace: llm
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: azurefile-csi-premium
+  resources:
+    requests:
+      storage: 200Gi

@@ -1,0 +1,88 @@
+# The vLLM OpenAI-compatible server, pinned to the GPU pool.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+  namespace: llm
+  labels: { app: vllm }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: vllm }
+  template:
+    metadata:
+      labels: { app: vllm }
+    spec:
+      # Land only on GPU nodes, and tolerate their taint.
+      nodeSelector:
+        nodepool: gpu
+      tolerations:
+        - key: sku
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: vllm
+          # Pin to a tag you have tested; :latest moves under you.
+          image: vllm/vllm-openai:v0.6.6
+          args:
+            - "--model=meta-llama/Llama-3.1-8B-Instruct"
+            - "--served-model-name=llama3.1-8b"
+            - "--gpu-memory-utilization=0.90"
+            - "--max-model-len=8192"
+            - "--max-num-seqs=256"
+            # Ungated alternative that needs no HF token:
+            # --model=Qwen/Qwen2.5-7B-Instruct
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: HF_HOME
+              value: /models            # cache weights on the PVC
+            - name: HUGGING_FACE_HUB_TOKEN
+              valueFrom:
+                secretKeyRef: { name: llm-secrets, key: HUGGING_FACE_HUB_TOKEN }
+            - name: VLLM_API_KEY         # vLLM enforces this as a Bearer token
+              valueFrom:
+                secretKeyRef: { name: llm-secrets, key: VLLM_API_KEY }
+          resources:
+            limits:
+              nvidia.com/gpu: 1          # one whole A100 for this replica
+            requests:
+              cpu: "6"
+              memory: 48Gi
+          volumeMounts:
+            - name: model-cache
+              mountPath: /models
+            - name: dshm                 # vLLM needs big /dev/shm
+              mountPath: /dev/shm
+            - name: kv                   # mounting triggers the Key Vault -> Secret sync
+              mountPath: /mnt/secrets-store
+              readOnly: true
+          # Model load can take minutes; keep the pod alive until it is ready.
+          startupProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 10
+            failureThreshold: 60         # up to 10 minutes to load
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 20
+            failureThreshold: 6
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: model-cache
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
+        # CSI volume that materialises the Key Vault secrets on the node.
+        - name: kv
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: llm-kv

@@ -1,0 +1,71 @@
+# A second vLLM deployment serving an EMBEDDING model on /v1/embeddings.
+# Together with the chat model from 03-deployment.yaml this is the serving
+# half of a RAG stack: embed with this, generate with that.
+#
+# Cost note: an embedding model barely touches an A100. In production you'd
+# put this on a cheaper A10 pool, or share a GPU via time-slicing / MIG,
+# rather than dedicating a full A100 to it. Kept simple here for clarity.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-embeddings
+  namespace: llm
+  labels: { app: vllm-embeddings }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: vllm-embeddings }
+  template:
+    metadata:
+      labels: { app: vllm-embeddings }
+    spec:
+      nodeSelector: { nodepool: gpu }
+      tolerations:
+        - { key: sku, operator: Equal, value: gpu, effect: NoSchedule }
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.6.6
+          args:
+            - "--model=BAAI/bge-large-en-v1.5"
+            - "--served-model-name=bge-large"
+            - "--task=embed"                 # serve embeddings, not chat
+            - "--gpu-memory-utilization=0.30" # tiny model; leave room if sharing
+          ports: [{ containerPort: 8000, name: http }]
+          env:
+            - { name: HF_HOME, value: /models }
+            - name: VLLM_API_KEY
+              valueFrom: { secretKeyRef: { name: llm-secrets, key: VLLM_API_KEY } }
+          resources:
+            limits: { nvidia.com/gpu: 1 }
+            requests: { cpu: "2", memory: 8Gi }
+          volumeMounts:
+            - { name: model-cache, mountPath: /models }
+            - { name: dshm, mountPath: /dev/shm }
+            - { name: kv, mountPath: /mnt/secrets-store, readOnly: true }
+          startupProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+      volumes:
+        - { name: model-cache, persistentVolumeClaim: { claimName: model-cache } }
+        - name: dshm
+          emptyDir: { medium: Memory, sizeLimit: 4Gi }
+        - name: kv
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes: { secretProviderClass: llm-kv }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-embeddings
+  namespace: llm
+  labels: { app: vllm-embeddings }
+spec:
+  type: ClusterIP
+  selector: { app: vllm-embeddings }
+  ports:
+    - { name: http, port: 80, targetPort: 8000 }

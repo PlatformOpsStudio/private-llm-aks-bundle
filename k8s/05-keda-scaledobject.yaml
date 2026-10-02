@@ -1,0 +1,26 @@
+# Scale vLLM replicas on real serving pressure, not CPU.
+# vLLM exposes vllm:num_requests_waiting at /metrics — queued requests are the
+# signal that you are GPU-bound and need another replica (and another GPU node).
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: vllm
+  namespace: llm
+spec:
+  scaleTargetRef:
+    name: vllm
+  minReplicaCount: 1          # set to 0 to scale fully to zero when idle
+  maxReplicaCount: 4
+  cooldownPeriod: 300         # GPUs are expensive; don't flap
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://kps-kube-prometheus-stack-prometheus.monitoring.svc:9090
+        metricName: vllm_num_requests_waiting
+        query: sum(vllm:num_requests_waiting{namespace="llm"})
+        threshold: "5"        # >5 queued requests per replica -> scale out

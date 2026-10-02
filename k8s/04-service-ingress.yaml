@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm
+  namespace: llm
+  labels: { app: vllm }
+spec:
+  type: ClusterIP
+  selector: { app: vllm }
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+---
+# Internal ingress — reachable only from inside the VNet (VPN / peered networks).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vllm
+  namespace: llm
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"   # long streams
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: llm.internal.example.com        # map this to the internal LB IP in your private DNS
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: vllm
+                port:
+                  number: 80

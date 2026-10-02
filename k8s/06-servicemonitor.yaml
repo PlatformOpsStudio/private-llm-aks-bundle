@@ -1,0 +1,17 @@
+# Tells Prometheus (kube-prometheus-stack) to scrape vLLM's /metrics endpoint.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vllm
+  namespace: llm
+  labels:
+    release: kps          # must match the kube-prometheus-stack release name
+spec:
+  selector:
+    matchLabels: { app: vllm }
+  namespaceSelector:
+    matchNames: ["llm"]
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
